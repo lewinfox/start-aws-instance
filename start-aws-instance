@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+
+import boto3
+import os
+import sys
+import time
+
+
+def usage():
+    print("Usage: start-aws-instance <instance_id>")
+    print("  If instance_id is not provided, the script will look for an "
+          "$AWS_INSTANCE_ID environment variable instead")
+    sys.exit(1)
+
+
+def ask_user(question):
+    """Returns bool"""
+    answer = ""
+    while answer.lower() not in ["y", "yes", "n", "no"]:
+        answer = input(f"{question} y/n: ")
+    return answer.lower() in ["y", "yes"]
+
+
+def get_state(instance_id):
+    """Returns string"""
+    return (
+        ec2.describe_instances(InstanceIds=[instance_id])
+        .get("Reservations")[0]
+        .get("Instances")[0]
+        .get("State")
+        .get("Name")
+    )
+
+
+def get_public_dns(instance_id):
+    """Returns string"""
+    return (
+        ec2.describe_instances(InstanceIds=[instance_id])
+        .get("Reservations")[0]
+        .get("Instances")[0]
+        .get("PublicDnsName")
+    )
+
+
+def start(instance_id, timeout_secs=30):
+    """Returns bool"""
+    res = (
+        ec2.start_instances(InstanceIds=[instance_id])
+        .get("StartingInstances")[0]
+    )
+    prev_state = res.get("CurrentState").get("Name")
+    current_state = res.get("CurrentState").get("Name")
+    success = current_state in ["running", "pending"]
+    if not success:
+        print("Unable to start instance.")
+        print(f"  Current state: {current_state}")
+        print(f"  Previous state: {prev_state}")
+        return False
+    if current_state == "pending":
+        print("Instance is starting...")
+        time.sleep(2)
+    counter = 0
+    while (get_state(instance_id) != "running"):
+        if counter >= timeout_secs:
+            print(f"Timeout of {timeout_secs}s exceeded")
+            return False
+        time.sleep(1)
+        counter += 1
+
+    dns = get_public_dns(instance_id)
+    print(dns)
+    return True
+
+
+def shutdown(instance_id, prompt=True):
+    """Returns bool"""
+    if prompt:
+        if not ask_user(f"Shut down instance {instance_id}?"):
+            pass
+    state = get_state(instance_id)
+    if state != "running":
+        print(f"Instance state is {state} and cannot be stopped now")
+        return False
+    res = (
+        ec2.stop_instances(InstanceIds=[instance_id])
+        .get("StoppingInstances")[0]
+    )
+    success = res.get("CurrentState").get("Name") == "stopping"
+    if success:
+        print("Stopping instance")
+        return True
+
+
+if __name__ == "__main__":
+
+    ec2 = boto3.client("ec2")
+
+    # If we have an arg, use that as instance ID
+    if len(sys.argv) > 1:
+        usage()
+    if len(sys.argv) == 1:
+        instance_id = sys.argv[1]
+    else:
+        instance_id = os.environ.get("AWS_INSTANCE_ID", None)
+    if instance_id is None:
+        raise Exception("No instance ID provided and $AWS_INSTANCE_ID not "
+                        "found - exiting")
+
+    print(f"Using instance ID {instance_id}")
+
+    started = start(instance_id)
+
+    if started:
+        dns = get_public_dns(instance_id)
+
+    if ask_user("SSH into instance?"):
+        timeout = 30
+        while get_state(instance_id) != "running" and timeout >= 0:
+            time.sleep(1)
+            timeout -= 1
+        while (
+            os.system(f"ssh -i ~/.ssh/aws-20200412.pem ubuntu@{dns}") != 0
+            and timeout >= 0
+        ):
+            time.sleep(5)
+            timeout -= 1
+        if timeout <= 0:
+            print("Failed to connect - check AWS console")
+
+    success = shutdown(instance_id)
+
+    if success:
+        print("All done here")
+        sys.exit(0)
+    else:
+        print("Instance not shut down correctly - check AWS console")
+        sys.exit(1)
