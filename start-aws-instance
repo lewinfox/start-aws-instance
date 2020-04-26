@@ -112,6 +112,8 @@ if __name__ == "__main__":
 
     if started:
         dns = get_public_dns(instance_id)
+        print(f"RStudio: {dns}:8787")
+        print(f"VSCode: {dns}:8080")
 
     if ask_user("SSH into instance?"):
         timeout = 30
