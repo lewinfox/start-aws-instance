@@ -98,7 +98,7 @@ if __name__ == "__main__":
     # If we have an arg, use that as instance ID
     if len(sys.argv) > 1:
         usage()
-    if len(sys.argv) == 1:
+    if len(sys.argv) == 2:
         instance_id = sys.argv[1]
     else:
         instance_id = os.environ.get("AWS_INSTANCE_ID", None)
